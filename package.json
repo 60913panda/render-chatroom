@@ -1,0 +1,13 @@
+{
+  "name": "render-chatroom",
+  "version": "1.0.0",
+  "description": "A simple chatroom deployed on Render",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
