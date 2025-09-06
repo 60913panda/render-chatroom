@@ -1,3 +1,4 @@
+// 連線到後端 Socket.IO 伺服器
 const socket = io();
 
 // 獲取頁面上的 DOM 元素
@@ -10,14 +11,17 @@ const messages = document.getElementById('messages');
 let currentUser = null; // 用來儲存當前登入者的資訊
 
 // --- Google 登入回呼函數 ---
-// 當使用者成功登入後，Google 的函式庫會自動呼叫此函數
+// 這個函式必須是「全域函式」(Global Function)，也就是不能被包在任何其他函式內部。
+// 這樣 Google 的腳本才能在全域範圍內找到並呼叫它。
 function handleCredentialResponse(response) {
+    console.log("從 Google 獲取到 ID token，準備傳送到後端驗證...");
     // 將從 Google 取得的 ID Token 傳送給我們的後端伺服器進行驗證
     socket.emit('login-with-google', response.credential);
 }
 
 // 監聽來自伺服器的 'login-success' 事件
 socket.on('login-success', (user) => {
+    console.log("登入成功！", user);
     currentUser = user; // 儲存使用者資訊
     // 登入成功，切換畫面
     loginScreen.style.display = 'none';
@@ -80,7 +84,6 @@ function displayMessage(data) {
     messages.appendChild(wrapper);
     messages.scrollTop = messages.scrollHeight; // 自動捲動到最下方
 }
-
 
 // 監聽從伺服器傳來的 'chat message' 事件
 socket.on('chat message', displayMessage);
