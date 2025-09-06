@@ -1,99 +1,94 @@
-// 連線到後端 Socket.IO 伺服器
-const socket = io();
+const express = require('express');
+const http = require('http');
+const { Server } = require("socket.io");
+const { OAuth2Client } = require('google-auth-library');
 
-// 獲取頁面上的 DOM 元素
-const loginScreen = document.getElementById('login-screen');
-const chatScreen = document.getElementById('chat-screen');
-const form = document.getElementById('form');
-const input = document.getElementById('input');
-const messages = document.getElementById('messages');
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+const PORT = process.env.PORT || 3000;
 
-let currentUser = null; // 用來儲存當前登入者的資訊
+// --- Google Auth 設定 ---
+const GOOGLE_CLIENT_ID = "308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com";
+const client = new OAuth2Client();
 
-// --- Google 登入回呼函數 ---
-// 這個函式必須是「全域函式」(Global Function)，也就是不能被包在任何其他函式內部。
-// 這樣 Google 的腳本才能在全域範圍內找到並呼叫它。
-function handleCredentialResponse(response) {
-    console.log("從 Google 獲取到 ID token，準備傳送到後端驗證...");
-    // 將從 Google 取得的 ID Token 傳送給我們的後端伺服器進行驗證
-    socket.emit('login-with-google', response.credential);
+// --- 聊天紀錄功能 ---
+// 建立一個陣列來儲存歷史訊息
+const messageHistory = [];
+// 設定歷史紀錄的上限，防止記憶體溢出
+const HISTORY_LIMIT = 50;
+// --------------------
+
+async function verifyGoogleToken(token) {
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        return { name: payload.name, picture: payload.picture, email: payload.email };
+    } catch (error) {
+        console.error("Google Token 驗證失敗:", error.message);
+        return null;
+    }
 }
 
-// 監聽來自伺服器的 'login-success' 事件
-socket.on('login-success', (user) => {
-    console.log("登入成功！", user);
-    currentUser = user; // 儲存使用者資訊
-    // 登入成功，切換畫面
-    loginScreen.style.display = 'none';
-    chatScreen.style.display = 'flex';
+app.use(express.static('public'));
+
+io.on('connection', (socket) => {
+    console.log('一位使用者連線了');
+
+    // --- **新功能**：傳送歷史紀錄給新連線的使用者 ---
+    // 我們使用 socket.emit 而不是 io.emit，這樣只會傳給「剛連進來」的那個人
+    socket.emit('load history', messageHistory);
+    // ---------------------------------------------
+
+    socket.on('login-with-google', async (token) => {
+        try {
+            const userData = await verifyGoogleToken(token);
+            if (userData) {
+                socket.user = userData;
+                socket.user.socketId = socket.id;
+                io.emit('system message', `[系統] "${socket.user.name}" 加入了聊天室`);
+                socket.emit('login-success', socket.user);
+            } else {
+                socket.emit('login-failed');
+            }
+        } catch (error) {
+            console.error('登入處理過程中發生嚴重錯誤:', error);
+            socket.emit('login-failed');
+        }
+    });
+
+    socket.on('chat message', (msg) => {
+        if (socket.user) {
+            const messagePackage = {
+                user: socket.user,
+                message: msg
+            };
+
+            // **新功能**：將新訊息存入歷史紀錄
+            messageHistory.push(messagePackage);
+            // 如果歷史紀錄超過上限，就移除最舊的一筆
+            if (messageHistory.length > HISTORY_LIMIT) {
+                messageHistory.shift();
+            }
+            // ---------------------------------
+
+            // 正常廣播新訊息給所有人
+            io.emit('chat message', messagePackage);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        if (socket.user) {
+            console.log(`"${socket.user.name}" 離開了`);
+            io.emit('system message', `[系統] "${socket.user.name}" 離開了聊天室`);
+        }
+    });
 });
 
-// 監聽來自伺服器的 'login-failed' 事件
-socket.on('login-failed', () => {
-    alert('Google 登入驗證失敗，請清除快取後重試。');
-});
-
-
-// 監聽表單的提交事件
-form.addEventListener('submit', function(e) {
-    e.preventDefault(); // 防止表單提交導致頁面重新整理
-    if (input.value && currentUser) {
-        socket.emit('chat message', input.value);
-        input.value = ''; // 清空輸入框
-    }
-});
-
-// --- 新的訊息顯示邏輯 ---
-function displayMessage(data) {
-    const { user, message } = data;
-    
-    const wrapper = document.createElement('li');
-    wrapper.classList.add('message-wrapper');
-    
-    const container = document.createElement('div');
-    container.classList.add('message-container');
-
-    const avatar = document.createElement('img');
-    avatar.src = user.picture; // 使用 Google 頭像 URL
-    avatar.classList.add('avatar');
-    
-    const content = document.createElement('div');
-    content.classList.add('message-content');
-    
-    const userName = document.createElement('div');
-    userName.textContent = user.name; // 使用 Google 名稱
-    userName.classList.add('user-name');
-    
-    const bubble = document.createElement('div');
-    bubble.textContent = message;
-    bubble.classList.add('message-bubble');
-
-    // 透過 socket.id 判斷訊息是否為自己發送的
-    if (user.socketId === socket.id) {
-        wrapper.classList.add('self');
-    } else {
-        wrapper.classList.add('other');
-    }
-    
-    content.appendChild(userName);
-    content.appendChild(bubble);
-    container.appendChild(avatar);
-    container.appendChild(content);
-    wrapper.appendChild(container);
-
-    messages.appendChild(wrapper);
-    messages.scrollTop = messages.scrollHeight; // 自動捲動到最下方
-}
-
-// 監聽從伺服器傳來的 'chat message' 事件
-socket.on('chat message', displayMessage);
-
-// 監聽系統訊息
-socket.on('system message', function(msg) {
-    const item = document.createElement('li');
-    item.classList.add('system-message');
-    item.textContent = msg;
-    messages.appendChild(item);
-    messages.scrollTop = messages.scrollHeight;
+server.listen(PORT, () => {
+    console.log(`伺服器成功啟動，正在監聽 http://localhost:${PORT}`);
 });
 
