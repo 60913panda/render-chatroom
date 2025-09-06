@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
-// 引入 Google 官方驗證函式庫
 const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
@@ -10,27 +9,27 @@ const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
 // --- Google Auth 設定 ---
-// 您的 Google OAuth Client ID
 const GOOGLE_CLIENT_ID = "308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com";
-const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+// *** 關鍵修改 1: 簡化 client 初始化 ***
+const client = new OAuth2Client();
 
-// 建立一個函式專門用來驗證從前端傳來的 Google ID Token
 async function verifyGoogleToken(token) {
+    // 這裡的 try...catch 專門處理 Google API 的錯誤
     try {
         const ticket = await client.verifyIdToken({
             idToken: token,
             audience: GOOGLE_CLIENT_ID,
         });
         const payload = ticket.getPayload();
-        // 驗證成功，回傳使用者資料
         return {
             name: payload.name,
             picture: payload.picture,
             email: payload.email,
         };
     } catch (error) {
-        console.error("Google Token 驗證失敗:", error);
-        return null; // 驗證失敗
+        // 如果 token 無效或過期，Google 會在這裡拋出錯誤
+        console.error("Google Token 驗證失敗:", error.message);
+        return null;
     }
 }
 // -------------------------
@@ -40,38 +39,38 @@ app.use(express.static('public'));
 io.on('connection', (socket) => {
     console.log('一位使用者連線了');
 
-    // 新的登入邏輯：監聽 'login-with-google' 事件
     socket.on('login-with-google', async (token) => {
-        const userData = await verifyGoogleToken(token);
-        
-        if (userData) {
-            // 驗證成功後，將使用者資料存到 socket 連線中
-            socket.user = userData;
-            // 為了方便前端判斷訊息是否為自己發送的，我們將 socket.id 也存入
-            socket.user.socketId = socket.id;
+        // *** 關鍵修改 2: 增加頂層 try...catch 防止伺服器崩潰 ***
+        try {
+            const userData = await verifyGoogleToken(token);
+            
+            if (userData) {
+                socket.user = userData;
+                socket.user.socketId = socket.id;
 
-            // 通知所有人有新使用者加入
-            io.emit('system message', `[系統] "${socket.user.name}" 加入了聊天室`);
-            // 單獨通知該使用者登入成功
-            socket.emit('login-success', socket.user);
-        } else {
-            // 驗證失敗，通知該使用者
+                io.emit('system message', `[系統] "${socket.user.name}" 加入了聊天室`);
+                socket.emit('login-success', socket.user);
+            } else {
+                // verifyGoogleToken 回傳 null，代表 token 無效
+                socket.emit('login-failed');
+            }
+        } catch (error) {
+            // 如果在整個流程中發生任何未預期的錯誤，這個 catch 會接住它
+            console.error('登入處理過程中發生嚴重錯誤:', error);
+            // 通知使用者失敗，但伺服器不會崩潰
             socket.emit('login-failed');
         }
     });
 
-    // 修改訊息傳送邏輯
     socket.on('chat message', (msg) => {
-        // 只有在使用者成功登入後 (socket.user 存在)，才能發送訊息
         if (socket.user) {
             io.emit('chat message', {
-                user: socket.user, // 傳送整個 user 物件 (包含 name, picture, socketId)
+                user: socket.user,
                 message: msg
             });
         }
     });
 
-    // 修改斷線邏輯
     socket.on('disconnect', () => {
         if (socket.user) {
             console.log(`"${socket.user.name}" 離開了`);
