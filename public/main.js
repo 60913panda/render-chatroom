@@ -1,94 +1,60 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require("socket.io");
-const { OAuth2Client } = require('google-auth-library');
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google 登入聊天室</title>
+    <!-- 引入 Google Identity Services 函式庫 -->
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background-color: #f0f2f5; overflow: hidden; }
+        .screen-container { width: 100vw; height: 100vh; transition: opacity 0.5s ease; }
+        #login-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        #chat-screen { display: none; flex-direction: column; height: 100vh; }
+        #messages { list-style-type: none; margin: 0; padding: 20px; flex-grow: 1; overflow-y: auto; background-color: #e5ddd5; }
+        .message-wrapper { display: flex; margin-bottom: 12px; }
+        .message-wrapper.self { justify-content: flex-end; }
+        .message-container { display: flex; max-width: 80%; }
+        .message-wrapper.self .message-container { flex-direction: row-reverse; }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; margin: 0 10px; flex-shrink: 0; }
+        .message-content { display: flex; flex-direction: column; }
+        .user-name { font-size: 0.8em; color: #555; margin-bottom: 4px; }
+        .message-wrapper.self .user-name { text-align: right; }
+        .message-bubble { padding: 10px 15px; border-radius: 18px; line-height: 1.4; word-wrap: break-word; }
+        .message-wrapper.self .message-bubble { background-color: #dcf8c6; border-bottom-right-radius: 4px; }
+        .message-wrapper.other .message-bubble { background-color: #ffffff; border-bottom-left-radius: 4px; }
+        .system-message { width: 100%; text-align: center; color: #666; font-size: 0.9em; margin: 10px 0; }
+        #form { display: flex; padding: 10px; background: #f0f0f0; border-top: 1px solid #ddd; }
+        #input { border: 1px solid #ddd; padding: 10px; width: 100%; border-radius: 20px; margin-right: 10px; font-size: 16px; }
+        #form button { background: #0084ff; color: white; border: none; padding: 0 20px; border-radius: 20px; cursor: pointer; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <!-- 登入畫面 -->
+    <div id="login-screen" class="screen-container">
+        <h2>歡迎來到即時聊天室</h2>
+        <p>請使用您的 Google 帳號登入以繼續</p>
+        <div id="g_id_onload"
+             data-client_id="308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com"
+             data-callback="handleCredentialResponse"
+             data-auto_prompt="false">
+        </div>
+        <div class="g_id_signin" data-type="standard" data-theme="outline" data-text="sign_in_with" data-shape="rectangular" data-logo_alignment="left">
+        </div>
+    </div>
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-const PORT = process.env.PORT || 3000;
+    <!-- 聊天室主畫面 -->
+    <div id="chat-screen" class="screen-container">
+        <ul id="messages"></ul>
+        <form id="form" action="">
+            <input id="input" autocomplete="off" placeholder="輸入訊息..." />
+            <button>傳送</button>
+        </form>
+    </div>
 
-// --- Google Auth 設定 ---
-const GOOGLE_CLIENT_ID = "308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com";
-const client = new OAuth2Client();
-
-// --- 聊天紀錄功能 ---
-// 建立一個陣列來儲存歷史訊息
-const messageHistory = [];
-// 設定歷史紀錄的上限，防止記憶體溢出
-const HISTORY_LIMIT = 50;
-// --------------------
-
-async function verifyGoogleToken(token) {
-    try {
-        const ticket = await client.verifyIdToken({
-            idToken: token,
-            audience: GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-        return { name: payload.name, picture: payload.picture, email: payload.email };
-    } catch (error) {
-        console.error("Google Token 驗證失敗:", error.message);
-        return null;
-    }
-}
-
-app.use(express.static('public'));
-
-io.on('connection', (socket) => {
-    console.log('一位使用者連線了');
-
-    // --- **新功能**：傳送歷史紀錄給新連線的使用者 ---
-    // 我們使用 socket.emit 而不是 io.emit，這樣只會傳給「剛連進來」的那個人
-    socket.emit('load history', messageHistory);
-    // ---------------------------------------------
-
-    socket.on('login-with-google', async (token) => {
-        try {
-            const userData = await verifyGoogleToken(token);
-            if (userData) {
-                socket.user = userData;
-                socket.user.socketId = socket.id;
-                io.emit('system message', `[系統] "${socket.user.name}" 加入了聊天室`);
-                socket.emit('login-success', socket.user);
-            } else {
-                socket.emit('login-failed');
-            }
-        } catch (error) {
-            console.error('登入處理過程中發生嚴重錯誤:', error);
-            socket.emit('login-failed');
-        }
-    });
-
-    socket.on('chat message', (msg) => {
-        if (socket.user) {
-            const messagePackage = {
-                user: socket.user,
-                message: msg
-            };
-
-            // **新功能**：將新訊息存入歷史紀錄
-            messageHistory.push(messagePackage);
-            // 如果歷史紀錄超過上限，就移除最舊的一筆
-            if (messageHistory.length > HISTORY_LIMIT) {
-                messageHistory.shift();
-            }
-            // ---------------------------------
-
-            // 正常廣播新訊息給所有人
-            io.emit('chat message', messagePackage);
-        }
-    });
-
-    socket.on('disconnect', () => {
-        if (socket.user) {
-            console.log(`"${socket.user.name}" 離開了`);
-            io.emit('system message', `[系統] "${socket.user.name}" 離開了聊天室`);
-        }
-    });
-});
-
-server.listen(PORT, () => {
-    console.log(`伺服器成功啟動，正在監聽 http://localhost:${PORT}`);
-});
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- !!! 關鍵修改：在這裡加上 defer 屬性 !!! -->
+    <script src="/main.js" defer></script>
+</body>
+</html>
 
