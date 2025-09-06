@@ -3,66 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>聊天室666</title>
-    <!-- 引入 Google Identity Services 函式庫 -->
-    <script src="https://accounts.google.com/gsi/client" async></script>
+    <title>胖達的聊天室</title>
+    <!-- 載入 Google 登入函式庫 -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background-color: #f0f2f5; overflow: hidden; }
-        .screen-container { width: 100vw; height: 100vh; transition: opacity 0.5s ease; }
-        /* 登入畫面 */
-        #login-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
-        /* 聊天室主畫面 (預設隱藏) */
-        #chat-screen { display: none; flex-direction: column; height: 100vh; }
-        
-        #messages { list-style-type: none; margin: 0; padding: 20px; flex-grow: 1; overflow-y: auto; background-color: #e5ddd5; }
-        
-        /* 新的訊息樣式，包含頭像 */
-        .message-wrapper { display: flex; margin-bottom: 12px; }
-        .message-wrapper.self { justify-content: flex-end; }
-        .message-container { display: flex; max-width: 80%; }
-        .message-wrapper.self .message-container { flex-direction: row-reverse; }
-        .avatar { width: 40px; height: 40px; border-radius: 50%; margin: 0 10px; flex-shrink: 0; }
-        .message-content { display: flex; flex-direction: column; }
-        .user-name { font-size: 0.8em; color: #555; margin-bottom: 4px; }
-        .message-wrapper.self .user-name { text-align: right; }
-        .message-bubble { padding: 10px 15px; border-radius: 18px; line-height: 1.4; word-wrap: break-word; }
-        .message-wrapper.self .message-bubble { background-color: #dcf8c6; border-bottom-right-radius: 4px; }
-        .message-wrapper.other .message-bubble { background-color: #ffffff; border-bottom-left-radius: 4px; }
+        :root { --background: #f0f2f5; --bubble-self: #dcf8c6; --bubble-other: #ffffff; --text-primary: #111b21; --text-secondary: #667781; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background-color: var(--background); }
+        .hidden { display: none !important; }
 
-        .system-message { width: 100%; text-align: center; color: #666; font-size: 0.9em; margin: 10px 0; }
+        /* --- 登入畫面 --- */
+        #login-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; text-align: center; }
+        #login-screen h1 { color: var(--text-primary); }
+        #login-screen p { color: var(--text-secondary); }
+
+        /* --- 聊天室畫面 --- */
+        #chat-screen { display: flex; flex-direction: column; height: 100vh; }
+        #messages { list-style-type: none; margin: 0; padding: 20px; flex-grow: 1; overflow-y: auto; }
+        .message-wrapper { display: flex; flex-direction: column; margin-bottom: 12px; }
+        .message-container { display: flex; max-width: 75%; }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; margin: 0 10px; }
+        .message-content { display: flex; flex-direction: column; }
+        .user-name { font-size: 0.85em; color: var(--text-secondary); margin-bottom: 4px; font-weight: 500; }
+        .message-bubble { padding: 8px 12px; border-radius: 18px; line-height: 1.4; color: var(--text-primary); }
         
+        /* 自己和他人的訊息樣式 */
+        .message-wrapper.self { align-items: flex-end; }
+        .message-wrapper.self .message-container { flex-direction: row-reverse; }
+        .message-wrapper.self .message-bubble { background-color: var(--bubble-self); }
+        .message-wrapper.other { align-items: flex-start; }
+        .message-wrapper.other .message-bubble { background-color: var(--bubble-other); }
+        .message-wrapper.other .user-name { margin-left: 60px; }
+
+        /* 系統訊息 */
+        .system-message { width: 100%; text-align: center; color: var(--text-secondary); font-size: 0.9em; margin-bottom: 10px; }
+        
+        /* 輸入框 */
         #form { display: flex; padding: 10px; background: #f0f0f0; border-top: 1px solid #ddd; }
         #input { border: 1px solid #ddd; padding: 10px; width: 100%; border-radius: 20px; margin-right: 10px; font-size: 16px; }
-        #form button { background: #0084ff; color: white; border: none; padding: 0 20px; border-radius: 20px; cursor: pointer; font-size: 16px; }
+        #form button { background: #007bff; color: white; border: none; padding: 0 20px; border-radius: 20px; cursor: pointer; font-size: 16px; }
     </style>
 </head>
 <body>
-    <!-- 登入畫面 -->
-    <div id="login-screen" class="screen-container">
-        <h2>歡迎來到即時聊天室</h2>
+    <!-- 登入畫面 (預設顯示) -->
+    <div id="login-screen">
+        <h1> 歡迎來到胖達的聊天室</h1>
         <p>請使用您的 Google 帳號登入以繼續</p>
-        <!-- Google 登入按鈕初始化容器 -->
         <div id="g_id_onload"
              data-client_id="308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com"
-             data-callback="handleCredentialResponse"
-             data-auto_prompt="false">
+             data-callback="handleCredentialResponse">
         </div>
-        <!-- Google 登入按鈕渲染容器 -->
-        <div class="g_id_signin" data-type="standard" data-theme="outline" data-text="sign_in_with" data-shape="rectangular" data-logo_alignment="left">
-        </div>
+        <div class="g_id_signin" data-type="standard" data-theme="outline" data-text="sign_in_with" data-shape="rectangular" data-logo_alignment="left"></div>
     </div>
 
-    <!-- 聊天室主畫面 -->
-    <div id="chat-screen" class="screen-container">
+    <!-- 聊天室畫面 (預設隱藏) -->
+    <div id="chat-screen" class="hidden">
         <ul id="messages"></ul>
-        <form id="form" action="">
+        <form id="form">
             <input id="input" autocomplete="off" placeholder="輸入訊息..." />
-            <button>傳送</button>
+            <button type="submit">傳送</button>
         </form>
     </div>
 
+    <!-- 載入 Socket.IO 和我們的邏輯腳本 -->
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/main.js" defer></script>
+    <script src="/main.js" defer></script> <!-- defer 屬性是確保成功的關鍵 -->
 </body>
 </html>
 
