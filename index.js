@@ -10,29 +10,26 @@ const PORT = process.env.PORT || 3000;
 
 // --- Google Auth 設定 ---
 const GOOGLE_CLIENT_ID = "308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com";
-// *** 關鍵修改 1: 簡化 client 初始化 ***
 const client = new OAuth2Client();
 
+// --- 聊天紀錄功能 ---
+const messageHistory = [];
+const HISTORY_LIMIT = 50;
+// --------------------
+
 async function verifyGoogleToken(token) {
-    // 這裡的 try...catch 專門處理 Google API 的錯誤
     try {
         const ticket = await client.verifyIdToken({
             idToken: token,
             audience: GOOGLE_CLIENT_ID,
         });
         const payload = ticket.getPayload();
-        return {
-            name: payload.name,
-            picture: payload.picture,
-            email: payload.email,
-        };
+        return { name: payload.name, picture: payload.picture, email: payload.email };
     } catch (error) {
-        // 如果 token 無效或過期，Google 會在這裡拋出錯誤
         console.error("Google Token 驗證失敗:", error.message);
         return null;
     }
 }
-// -------------------------
 
 app.use(express.static('public'));
 
@@ -40,34 +37,44 @@ io.on('connection', (socket) => {
     console.log('一位使用者連線了');
 
     socket.on('login-with-google', async (token) => {
-        // *** 關鍵修改 2: 增加頂層 try...catch 防止伺服器崩潰 ***
         try {
             const userData = await verifyGoogleToken(token);
-            
             if (userData) {
                 socket.user = userData;
                 socket.user.socketId = socket.id;
-
-                io.emit('system message', `[系統] "${socket.user.name}" 加入了聊天室`);
+                
+                // *** 關鍵修改：登入成功後，才傳送歷史紀錄 ***
+                // 1. 先通知使用者登入成功 (這會讓前端切換畫面)
                 socket.emit('login-success', socket.user);
+
+                // 2. 接著，只把歷史紀錄傳給這位剛登入的使用者
+                socket.emit('load history', messageHistory);
+                
+                // 3. 最後，才廣播給所有人，通知有人加入了
+                io.emit('system message', `[系統] "${socket.user.name}" 加入了聊天室`);
+                
             } else {
-                // verifyGoogleToken 回傳 null，代表 token 無效
                 socket.emit('login-failed');
             }
         } catch (error) {
-            // 如果在整個流程中發生任何未預期的錯誤，這個 catch 會接住它
             console.error('登入處理過程中發生嚴重錯誤:', error);
-            // 通知使用者失敗，但伺服器不會崩潰
             socket.emit('login-failed');
         }
     });
 
     socket.on('chat message', (msg) => {
         if (socket.user) {
-            io.emit('chat message', {
+            const messagePackage = {
                 user: socket.user,
                 message: msg
-            });
+            };
+
+            messageHistory.push(messagePackage);
+            if (messageHistory.length > HISTORY_LIMIT) {
+                messageHistory.shift();
+            }
+
+            io.emit('chat message', messagePackage);
         }
     });
 
