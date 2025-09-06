@@ -1,7 +1,7 @@
 {
-  "name": "render-chatroom-google-auth",
+  "name": "render-chatroom-stable",
   "version": "1.0.0",
-  "description": "一個使用 Google 登入的真實聊天室",
+  "description": "A stable real-time chat application with Google Sign-In.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
