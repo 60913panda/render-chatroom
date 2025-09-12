@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require("socket.io");
 const { OAuth2Client } = require('google-auth-library');
 const redis = require('redis');
-const { google } = require('googleapis'); // 引入 googleapis
+const { google } = require('googleapis');
 const path = require('path');
 
 // --- 基本設定 ---
@@ -13,10 +13,18 @@ const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
 // --- Google Sheets API 設定 ---
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID; // 從環境變數讀取
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const sheets = google.sheets('v4');
+
+// [修改處] 判斷執行環境，指向正確的憑證路徑
+// 在 Render 上，Secret File 會被放在 /etc/secrets/
+// 在本地開發時，我們則讀取根目錄的檔案
+const keyFilePath = process.env.NODE_ENV === 'production'
+    ? '/etc/secrets/credentials.json'
+    : path.join(__dirname, 'credentials.json');
+
 const auth = new google.auth.GoogleAuth({
-    keyFile: path.join(__dirname, 'credentials.json'), // 指向憑證檔案
+    keyFile: keyFilePath,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
@@ -27,13 +35,18 @@ const HISTORY_LIMIT = 50;
 let redisClient;
 
 (async () => {
-    try {
-        redisClient = redis.createClient({ url: REDIS_URL });
-        redisClient.on('error', (err) => console.log('Redis Client Error', err));
-        await redisClient.connect();
-        console.log('已成功連接到 Redis 資料庫');
-    } catch (err) {
-        console.error('無法連接到 Redis:', err);
+    // 只有在提供了 REDIS_URL 的情況下才嘗試連接
+    if (REDIS_URL) {
+        try {
+            redisClient = redis.createClient({ url: REDIS_URL });
+            redisClient.on('error', (err) => console.log('Redis Client Error', err));
+            await redisClient.connect();
+            console.log('已成功連接到 Redis 資料庫');
+        } catch (err) {
+            console.error('無法連接到 Redis:', err);
+        }
+    } else {
+        console.log('未設定 REDIS_URL，將跳過 Redis 連接。');
     }
 })();
 
@@ -64,9 +77,11 @@ io.on('connection', async (socket) => {
                 socket.user = { ...userData, socketId: socket.id };
                 socket.emit('login-success', socket.user);
 
-                const history = await redisClient.lRange(HISTORY_KEY, 0, HISTORY_LIMIT - 1);
-                const messageHistory = history.map(item => JSON.parse(item));
-                socket.emit('load-history', messageHistory.reverse()); // 將訊息反轉，讓最新的在最下面
+                if (redisClient && redisClient.isReady) {
+                    const history = await redisClient.lRange(HISTORY_KEY, 0, -1);
+                    const messageHistory = history.map(item => JSON.parse(item)).reverse();
+                    socket.emit('load-history', messageHistory);
+                }
 
                 io.emit('system-message', `[系統] "${socket.user.name}" 加入了聊天室。`);
             } else {
@@ -83,15 +98,14 @@ io.on('connection', async (socket) => {
             const timestamp = new Date();
             const messagePackage = { user: socket.user, message: msg, timestamp: timestamp };
             
-            // 1. 廣播給所有使用者
             io.emit('chat-message', messagePackage);
 
-            // 2. 存入 Redis (非同步執行)
-            redisClient.lPush(HISTORY_KEY, JSON.stringify(messagePackage))
-                .then(() => redisClient.lTrim(HISTORY_KEY, 0, HISTORY_LIMIT - 1))
-                .catch(err => console.error("寫入 Redis 失敗:", err));
+            if (redisClient && redisClient.isReady) {
+                redisClient.lPush(HISTORY_KEY, JSON.stringify(messagePackage))
+                    .then(() => redisClient.lTrim(HISTORY_KEY, 0, HISTORY_LIMIT - 1))
+                    .catch(err => console.error("寫入 Redis 失敗:", err));
+            }
             
-            // 3. 存入 Google Sheet (非同步執行)
             try {
                 const formattedTime = timestamp.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
                 const values = [[socket.user.name, msg, formattedTime]];
@@ -99,12 +113,12 @@ io.on('connection', async (socket) => {
                 await sheets.spreadsheets.values.append({
                     auth,
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    range: '工作表1!A:C', // 假設您要寫入第一個工作表
+                    range: '工作表1!A:C',
                     valueInputOption: 'USER_ENTERED',
                     resource: { values },
                 });
             } catch (err) {
-                console.error('寫入 Google Sheet 失敗:', err.message);
+                console.error('寫入 Google Sheet 失敗:', err.message || err);
             }
         }
     });
