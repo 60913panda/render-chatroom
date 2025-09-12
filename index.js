@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
 const { OAuth2Client } = require('google-auth-library');
-const redis = require('redis'); // 引入 redis 套件
+const redis = require('redis');
+const { google } = require('googleapis'); // 引入 googleapis
+const path = require('path');
 
 // --- 基本設定 ---
 const app = express();
@@ -10,9 +12,17 @@ const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
+// --- Google Sheets API 設定 ---
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID; // 從環境變數讀取
+const sheets = google.sheets('v4');
+const auth = new google.auth.GoogleAuth({
+    keyFile: path.join(__dirname, 'credentials.json'), // 指向憑證檔案
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+});
+
 // --- Redis 資料庫設定 ---
-const REDIS_URL = process.env.REDIS_URL; // 從環境變數讀取 Redis URL
-const HISTORY_KEY = "chatroom_history"; // Redis 中儲存歷史紀錄的 Key
+const REDIS_URL = process.env.REDIS_URL;
+const HISTORY_KEY = "chatroom_history";
 const HISTORY_LIMIT = 50;
 let redisClient;
 
@@ -27,17 +37,13 @@ let redisClient;
     }
 })();
 
-
 // --- Google 登入設定 ---
 const GOOGLE_CLIENT_ID = "308930641338-05gogl8ivqvrsj92p4bm1n135ts8hgtm.apps.googleusercontent.com";
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 async function verifyGoogleToken(token) {
     try {
-        const ticket = await client.verifyIdToken({
-            idToken: token,
-            audience: GOOGLE_CLIENT_ID,
-        });
+        const ticket = await client.verifyIdToken({ idToken: token, audience: GOOGLE_CLIENT_ID });
         const payload = ticket.getPayload();
         return { name: payload.name, picture: payload.picture, email: payload.email };
     } catch (error) {
@@ -58,10 +64,9 @@ io.on('connection', async (socket) => {
                 socket.user = { ...userData, socketId: socket.id };
                 socket.emit('login-success', socket.user);
 
-                // [修改] 從 Redis 讀取歷史紀錄
                 const history = await redisClient.lRange(HISTORY_KEY, 0, HISTORY_LIMIT - 1);
                 const messageHistory = history.map(item => JSON.parse(item));
-                socket.emit('load-history', messageHistory);
+                socket.emit('load-history', messageHistory.reverse()); // 將訊息反轉，讓最新的在最下面
 
                 io.emit('system-message', `[系統] "${socket.user.name}" 加入了聊天室。`);
             } else {
@@ -75,18 +80,32 @@ io.on('connection', async (socket) => {
 
     socket.on('chat-message', async (msg) => {
         if (socket.user && socket.user.name) {
-            const messagePackage = {
-                user: socket.user,
-                message: msg,
-                timestamp: new Date()
-            };
+            const timestamp = new Date();
+            const messagePackage = { user: socket.user, message: msg, timestamp: timestamp };
             
-            // [修改] 將新訊息存入 Redis
-            await redisClient.lPush(HISTORY_KEY, JSON.stringify(messagePackage));
-            // [修改] 保持列表只有最新的 50 條訊息
-            await redisClient.lTrim(HISTORY_KEY, 0, HISTORY_LIMIT - 1);
-
+            // 1. 廣播給所有使用者
             io.emit('chat-message', messagePackage);
+
+            // 2. 存入 Redis (非同步執行)
+            redisClient.lPush(HISTORY_KEY, JSON.stringify(messagePackage))
+                .then(() => redisClient.lTrim(HISTORY_KEY, 0, HISTORY_LIMIT - 1))
+                .catch(err => console.error("寫入 Redis 失敗:", err));
+            
+            // 3. 存入 Google Sheet (非同步執行)
+            try {
+                const formattedTime = timestamp.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+                const values = [[socket.user.name, msg, formattedTime]];
+                
+                await sheets.spreadsheets.values.append({
+                    auth,
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: '工作表1!A:C', // 假設您要寫入第一個工作表
+                    valueInputOption: 'USER_ENTERED',
+                    resource: { values },
+                });
+            } catch (err) {
+                console.error('寫入 Google Sheet 失敗:', err.message);
+            }
         }
     });
 
